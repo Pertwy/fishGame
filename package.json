@@ -5,9 +5,12 @@
   "description": "Shared live fish tank with websocket state streaming",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "import-state": "node scripts/import-state.js",
+    "export-state": "node scripts/export-state.js"
   },
   "dependencies": {
+    "pg": "^8.16.0",
     "ws": "^8.18.3"
   }
 }

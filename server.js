@@ -2,13 +2,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 const { WebSocketServer } = require("ws");
+const store = require("./store");
 
 const PORT = Number(process.env.PORT || 3000);
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 600;
 const SAND_HEIGHT_RATIO = 0.26;
 const FISH_SIZE = { w: 72 * 0.82, h: 44 * 0.82 };
-const SNAPSHOT_FILE = path.join(__dirname, "tank-state.json");
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -377,45 +378,114 @@ function snapshot() {
   };
 }
 
-function loadSnapshot() {
-  try {
-    if (!fs.existsSync(SNAPSHOT_FILE)) return;
-    const raw = fs.readFileSync(SNAPSHOT_FILE, "utf8");
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    state.images = Array.isArray(parsed.images) ? parsed.images : [];
-    state.fishes = Array.isArray(parsed.fishes) ? parsed.fishes : [];
-    state.foods = Array.isArray(parsed.foods) ? parsed.foods : [];
-    state.medals = parsed.medals && typeof parsed.medals === "object" ? parsed.medals : {};
-    state.fight = {
-      phase: "idle",
-      endsAt: 0,
-      nextFoodAt: 0,
-      foodIntervalMs: 2000,
-      eatCounts: {},
-      results: []
-    };
-  } catch (error) {
-    console.error("Failed to load saved snapshot:", error);
-  }
+function persistencePayload() {
+  return {
+    images: state.images,
+    fishes: state.fishes,
+    foods: state.foods,
+    medals: state.medals
+  };
+}
+
+function ensureFishRuntimeFields(fish) {
+  const now = Date.now();
+  const sr = swimRect();
+  if (typeof fish.x !== "number") fish.x = rand(sr.minX, sr.maxX);
+  if (typeof fish.y !== "number") fish.y = rand(sr.minY, sr.maxY);
+  if (typeof fish.vx !== "number") fish.vx = rand(-40, 40);
+  if (typeof fish.vy !== "number") fish.vy = rand(-30, 30);
+  if (typeof fish.baseSpeed !== "number") fish.baseSpeed = rand(44, 66);
+  if (!fish.target || swimTargetIsInvalid(fish.target)) fish.target = randomSwimTarget();
+  if (typeof fish.retargetAt !== "number") fish.retargetAt = now + rand(1200, 3600);
+  if (fish.targetFoodId === undefined) fish.targetFoodId = null;
+}
+
+function applyPersistedPayload(parsed) {
+  const payload = store.normalizePayload(parsed);
+  if (!payload) return false;
+  state.images = payload.images;
+  state.fishes = payload.fishes;
+  state.foods = payload.foods;
+  state.medals = payload.medals;
+  state.fight = {
+    phase: "idle",
+    endsAt: 0,
+    nextFoodAt: 0,
+    foodIntervalMs: 2000,
+    eatCounts: {},
+    results: []
+  };
+  for (const fish of state.fishes) ensureFishRuntimeFields(fish);
+  return true;
 }
 
 function saveSnapshot() {
-  try {
-    const payload = {
-      images: state.images,
-      fishes: state.fishes,
-      foods: state.foods,
-      medals: state.medals
-    };
-    fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(payload));
-  } catch (error) {
-    console.error("Failed to write snapshot:", error);
-  }
+  store.save(persistencePayload()).catch((error) => {
+    console.error("Failed to save snapshot:", error);
+  });
 }
 
-const server = http.createServer((req, res) => {
-  const requestPath = req.url === "/" ? "/index.html" : req.url;
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function adminAuthorized(req) {
+  if (!ADMIN_SECRET) return false;
+  const key = req.headers["x-admin-key"];
+  return typeof key === "string" && key === ADMIN_SECRET;
+}
+
+async function handleAdminApi(req, res, url) {
+  if (!url.pathname.startsWith("/api/admin/")) return false;
+
+  if (!adminAuthorized(req)) {
+    res.writeHead(ADMIN_SECRET ? 401 : 503, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(ADMIN_SECRET ? "Unauthorized" : "Admin API disabled (set ADMIN_SECRET)");
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/export") {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(persistencePayload()));
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/import") {
+    let raw = "";
+    try {
+      raw = await readRequestBody(req);
+      const parsed = JSON.parse(raw);
+      if (!applyPersistedPayload(parsed)) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Invalid tank state JSON");
+        return true;
+      }
+      await store.save(persistencePayload());
+      broadcastState();
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`Imported ${state.fishes.length} fish.`);
+    } catch (error) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Invalid request body");
+    }
+    return true;
+  }
+
+  res.writeHead(404);
+  res.end("Not found");
+  return true;
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  if (await handleAdminApi(req, res, url)) return;
+
+  const requestPath = url.pathname === "/" ? "/index.html" : url.pathname;
   const safePath = path.normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, "");
   const filePath = path.join(__dirname, safePath);
   if (!filePath.startsWith(__dirname)) {
@@ -492,7 +562,28 @@ setInterval(() => {
 
 setInterval(saveSnapshot, 10_000);
 
-loadSnapshot();
-server.listen(PORT, () => {
-  console.log(`Fish tank server running on http://localhost:${PORT}`);
+async function start() {
+  await store.init();
+  let saved = await store.load();
+  if (store.isEmptyPayload(saved)) {
+    const seed = store.loadSeedFile();
+    if (seed) {
+      applyPersistedPayload(seed);
+      await store.save(persistencePayload());
+      console.log("Loaded initial tank from seed-state.json");
+    }
+  } else {
+    applyPersistedPayload(saved);
+    console.log(`Restored tank (${state.fishes.length} fish) from ${store.storageLabel()}`);
+  }
+
+  server.listen(PORT, () => {
+    console.log(`Fish tank server running on http://localhost:${PORT}`);
+    console.log(`Persistence: ${store.storageLabel()}`);
+  });
+}
+
+start().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
 });
