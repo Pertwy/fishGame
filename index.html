@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fish Tank</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="panel" id="sidePanel">
+        <h1 id="panelTitle">Fish Tank</h1>
+
+        <div id="battleExitPanel" class="battle-exit-panel" hidden>
+          <p class="hint battle-exit-hint">Battle in progress — no medals if you leave early.</p>
+          <button id="exitBattleBtn" type="button" class="button danger battle-exit-btn">Exit battle</button>
+        </div>
+
+        <div id="mainPanelContent" class="panel-main">
+          <div class="controls">
+            <button id="addFishBtn" type="button" class="button">Add Fish</button>
+          </div>
+
+          <div class="leaderboard-section">
+            <div id="leaderboardInline" class="leaderboard-body leaderboard-inline"></div>
+          </div>
+
+          <div class="panel-actions-row">
+            <button id="startBattleBtn" type="button" class="button battle-start-btn">Start battle</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tank-wrap" id="tankSection">
+        <aside id="battleScoreboard" class="battle-scoreboard" hidden aria-label="Battle scores">
+          <h3 class="battle-scoreboard-title">Running totals</h3>
+          <div id="battleScoreboardList" class="battle-scoreboard-list"></div>
+        </aside>
+        <div id="tank" class="tank tank-flex-grow" aria-label="Fish tank"></div>
+      </section>
+    </main>
+
+    <input id="fishImageEditInput" type="file" accept="image/*" hidden aria-hidden="true" />
+
+    <div id="addFishModal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="addFishModalTitle">
+      <div class="modal-card">
+        <h2 id="addFishModalTitle">Add fish</h2>
+        <p class="modal-hint">Choose an image and give your fish a name.</p>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Fish name</span>
+            <input id="addFishNameInput" type="text" maxlength="48" autocomplete="off" placeholder="e.g. Bubbles" />
+          </label>
+          <div class="modal-field">
+            <span>Image</span>
+            <label class="button file-button modal-file-trigger">
+              Choose image
+              <input id="addFishImageInput" type="file" accept="image/*" />
+            </label>
+            <span id="addFishImageLabel" class="add-fish-file-label" data-empty="true">No file chosen</span>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="addFishModalCancelBtn" type="button" class="button secondary">Cancel</button>
+          <button id="addFishModalConfirmBtn" type="button" class="button">Add to tank</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="battleSetupModal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="battleSetupTitle">
+      <div class="modal-card">
+        <h2 id="battleSetupTitle">Start battle</h2>
+        <p class="modal-hint">Set how long the fight runs and how often food appears.</p>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Battle time (seconds)</span>
+            <input id="battleDurationInput" type="number" min="5" max="900" value="60" step="1" />
+          </label>
+          <label class="modal-field">
+            <span>Food interval (seconds)</span>
+            <input id="battleFoodIntervalInput" type="number" min="0.5" max="120" value="2" step="0.5" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="battleSetupCancelBtn" type="button" class="button secondary">Cancel</button>
+          <button id="battleStartConfirmBtn" type="button" class="button">Start</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="battleResultsOverlay" class="modal-overlay results-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="battleResultsTitle">
+      <div class="modal-card results-card">
+        <h2 id="battleResultsTitle">Battle over</h2>
+        <p class="modal-hint">Medals for 1st–3rd place. Tied scores share the same place (next place is skipped).</p>
+        <div id="battleResultsPodium" class="podium"></div>
+        <button id="backToMainTankBtn" type="button" class="button">Back to main tank</button>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
