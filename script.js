@@ -9,8 +9,17 @@ const addFishModal = document.getElementById("addFishModal");
 const addFishNameInput = document.getElementById("addFishNameInput");
 const addFishImageInput = document.getElementById("addFishImageInput");
 const addFishImageLabel = document.getElementById("addFishImageLabel");
+const addFishSourceDefault = document.getElementById("addFishSourceDefault");
+const addFishSourceUpload = document.getElementById("addFishSourceUpload");
+const addFishDefaultPanel = document.getElementById("addFishDefaultPanel");
+const addFishUploadPanel = document.getElementById("addFishUploadPanel");
+const addFishColorInput = document.getElementById("addFishColorInput");
+const addFishPreview = document.getElementById("addFishPreview");
 const addFishModalCancelBtn = document.getElementById("addFishModalCancelBtn");
 const addFishModalConfirmBtn = document.getElementById("addFishModalConfirmBtn");
+
+const DEFAULT_FISH_COLOR = "#f28b54";
+let addFishPreviewRequest = 0;
 const sidePanel = document.getElementById("sidePanel");
 const mainPanelContent = document.getElementById("mainPanelContent");
 const battleExitPanel = document.getElementById("battleExitPanel");
@@ -25,11 +34,13 @@ const battleSetupCancelBtn = document.getElementById("battleSetupCancelBtn");
 const battleResultsOverlay = document.getElementById("battleResultsOverlay");
 const battleResultsPodium = document.getElementById("battleResultsPodium");
 const backToMainTankBtn = document.getElementById("backToMainTankBtn");
-const battleScoreboard = document.getElementById("battleScoreboard");
 const battleScoreboardList = document.getElementById("battleScoreboardList");
+const battleCountdown = document.getElementById("battleCountdown");
+const panelTitle = document.getElementById("panelTitle");
 
 const fishEls = new Map();
 const foodEls = new Map();
+let countdownTimerId = null;
 
 const state = {
   images: [],
@@ -38,6 +49,7 @@ const state = {
   medals: {},
   fight: {
     phase: "idle",
+    endsAt: 0,
     eatCounts: {},
     results: []
   },
@@ -237,14 +249,49 @@ function renderBattleResultsPodium() {
   }
 }
 
+function formatCountdown(ms) {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function updateBattleCountdown() {
+  if (!battleCountdown) return;
+  if (state.fight.phase !== "running" || !state.fight.endsAt) {
+    battleCountdown.hidden = true;
+    return;
+  }
+  const remaining = state.fight.endsAt - Date.now();
+  battleCountdown.hidden = false;
+  battleCountdown.textContent = formatCountdown(remaining);
+  battleCountdown.classList.toggle("battle-countdown-urgent", remaining <= 10_000);
+}
+
+function startCountdownTimer() {
+  stopCountdownTimer();
+  updateBattleCountdown();
+  countdownTimerId = window.setInterval(updateBattleCountdown, 250);
+}
+
+function stopCountdownTimer() {
+  if (countdownTimerId) {
+    window.clearInterval(countdownTimerId);
+    countdownTimerId = null;
+  }
+  if (battleCountdown) battleCountdown.hidden = true;
+}
+
 function syncFightPanel() {
   const running = state.fight.phase === "running";
   if (sidePanel) sidePanel.hidden = false;
   if (mainPanelContent) mainPanelContent.hidden = running;
   if (battleExitPanel) battleExitPanel.hidden = !running;
-  if (battleScoreboard) battleScoreboard.hidden = !running;
+  if (panelTitle) panelTitle.textContent = running ? "Fish Tank — Battle" : "Fish Tank";
   battleResultsOverlay.hidden = state.fight.phase !== "results";
   document.body.classList.toggle("battle-active", running);
+  if (running) startCountdownTimer();
+  else stopCountdownTimer();
 }
 
 function refreshControls() {
@@ -293,7 +340,13 @@ function applyRemoteState(payload) {
   state.fishes = Array.isArray(payload.fishes) ? payload.fishes : [];
   state.foods = Array.isArray(payload.foods) ? payload.foods : [];
   state.medals = payload.medals && typeof payload.medals === "object" ? payload.medals : {};
-  state.fight = payload.fight || { phase: "idle", eatCounts: {}, results: [] };
+  const fight = payload.fight || {};
+  state.fight = {
+    phase: fight.phase || "idle",
+    endsAt: Number(fight.endsAt) || 0,
+    eatCounts: fight.eatCounts || {},
+    results: Array.isArray(fight.results) ? fight.results : []
+  };
   if (state.selectedFishId && !state.fishes.some((f) => f.id === state.selectedFishId)) {
     state.selectedFishId = null;
   }
@@ -301,9 +354,35 @@ function applyRemoteState(payload) {
   renderFood();
   renderInlineLeaderboard();
   renderBattleScoreboard();
+  updateBattleCountdown();
   renderBattleResultsPodium();
   syncFightPanel();
   refreshSelectionUI();
+}
+
+function canvasHasTransparency(ctx, w, h) {
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const step = Math.max(4, Math.floor((w * h) / 4096) * 4);
+  for (let i = 3; i < data.length; i += step) {
+    if (data[i] < 250) return true;
+  }
+  return false;
+}
+
+function rasterizeToDataUrl(img, maxDim = 320) {
+  const longest = Math.max(img.width, img.height, 1);
+  const scale = Math.min(1, maxDim / longest);
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const hasAlpha = canvasHasTransparency(ctx, w, h);
+  return hasAlpha ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", 0.82);
 }
 
 function uploadAsDataUrl(file, maxDim = 320) {
@@ -312,20 +391,9 @@ function uploadAsDataUrl(file, maxDim = 320) {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const longest = Math.max(img.width, img.height, 1);
-        const scale = Math.min(1, maxDim / longest);
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(String(reader.result));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.82));
+        const dataUrl = rasterizeToDataUrl(img, maxDim);
+        if (dataUrl) resolve(dataUrl);
+        else resolve(String(reader.result));
       };
       img.onerror = () => reject(new Error("Image decode failed"));
       img.src = String(reader.result);
@@ -335,13 +403,81 @@ function uploadAsDataUrl(file, maxDim = 320) {
   });
 }
 
+function defaultFishSvg(color) {
+  const fill = color || DEFAULT_FISH_COLOR;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 72">
+    <ellipse cx="46" cy="36" rx="38" ry="24" fill="${fill}"/>
+    <path d="M84 36 L116 20 L116 52 Z" fill="${fill}"/>
+    <circle cx="30" cy="28" r="6" fill="#ffffff"/>
+    <circle cx="29" cy="28" r="3" fill="#173040"/>
+  </svg>`;
+}
+
+function generateDefaultFishDataUrl(color) {
+  const svg = defaultFishSvg(color);
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const dataUrl = rasterizeToDataUrl(img, 200);
+      if (dataUrl) resolve(dataUrl);
+      else reject(new Error("Could not render default fish"));
+    };
+    img.onerror = () => reject(new Error("Could not render default fish"));
+    img.src = url;
+  });
+}
+
+function addFishUsesDefault() {
+  return Boolean(addFishSourceDefault?.checked);
+}
+
+function syncAddFishSourcePanels() {
+  const useDefault = addFishUsesDefault();
+  if (addFishDefaultPanel) addFishDefaultPanel.hidden = !useDefault;
+  if (addFishUploadPanel) addFishUploadPanel.hidden = useDefault;
+}
+
+async function refreshAddFishPreview() {
+  if (!addFishPreview) return;
+  const requestId = ++addFishPreviewRequest;
+  try {
+    let src = "";
+    if (addFishUsesDefault()) {
+      const color = addFishColorInput?.value || DEFAULT_FISH_COLOR;
+      src = await generateDefaultFishDataUrl(color);
+    } else {
+      const file = addFishImageInput?.files?.[0];
+      if (file) src = await uploadAsDataUrl(file);
+    }
+    if (requestId !== addFishPreviewRequest) return;
+    if (src) {
+      addFishPreview.src = src;
+      addFishPreview.hidden = false;
+    } else {
+      addFishPreview.removeAttribute("src");
+      addFishPreview.hidden = true;
+    }
+  } catch {
+    if (requestId === addFishPreviewRequest) {
+      addFishPreview.removeAttribute("src");
+      addFishPreview.hidden = true;
+    }
+  }
+}
+
 function resetAddFishModal() {
   if (addFishNameInput) addFishNameInput.value = "";
   if (addFishImageInput) addFishImageInput.value = "";
+  if (addFishSourceDefault) addFishSourceDefault.checked = true;
+  if (addFishSourceUpload) addFishSourceUpload.checked = false;
+  if (addFishColorInput) addFishColorInput.value = DEFAULT_FISH_COLOR;
   if (addFishImageLabel) {
     addFishImageLabel.textContent = "No file chosen";
     addFishImageLabel.dataset.empty = "true";
   }
+  syncAddFishSourcePanels();
+  refreshAddFishPreview();
 }
 
 function closeAddFishModal() {
@@ -441,16 +577,30 @@ if (fishImageEditInput) {
   });
 }
 
+addFishSourceDefault?.addEventListener("change", () => {
+  syncAddFishSourcePanels();
+  refreshAddFishPreview();
+});
+addFishSourceUpload?.addEventListener("change", () => {
+  syncAddFishSourcePanels();
+  refreshAddFishPreview();
+});
+addFishColorInput?.addEventListener("input", () => {
+  if (addFishUsesDefault()) refreshAddFishPreview();
+});
+
 if (addFishImageInput && addFishImageLabel) {
   addFishImageInput.addEventListener("change", () => {
     const f = addFishImageInput.files?.[0];
     if (!f) {
       addFishImageLabel.textContent = "No file chosen";
       addFishImageLabel.dataset.empty = "true";
+      refreshAddFishPreview();
       return;
     }
     addFishImageLabel.textContent = f.name;
     addFishImageLabel.dataset.empty = "false";
+    refreshAddFishPreview();
   });
 }
 
@@ -461,21 +611,26 @@ addFishModal?.addEventListener("click", (e) => {
 
 addFishModalConfirmBtn?.addEventListener("click", async () => {
   const name = addFishNameInput?.value.trim() ?? "";
-  const file = addFishImageInput?.files?.[0];
   if (!name) {
     window.alert("Please enter a name for your fish.");
     return;
   }
-  if (!file) {
-    window.alert("Please choose an image.");
-    return;
-  }
   try {
-    const src = await uploadAsDataUrl(file);
-    wsSend("addFish", { name, src });
+    let src = "";
+    if (addFishUsesDefault()) {
+      src = await generateDefaultFishDataUrl(addFishColorInput?.value || DEFAULT_FISH_COLOR);
+    } else {
+      const file = addFishImageInput?.files?.[0];
+      if (!file) {
+        window.alert("Please choose an image, or use the default fish.");
+        return;
+      }
+      src = await uploadAsDataUrl(file);
+    }
+    if (!wsSend("addFish", { name, src })) return;
     closeAddFishModal();
   } catch {
-    window.alert("Could not load that image file.");
+    window.alert("Could not prepare that fish image.");
   }
 });
 

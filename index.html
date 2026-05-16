@@ -13,6 +13,12 @@
 
         <div id="battleExitPanel" class="battle-exit-panel" hidden>
           <p class="hint battle-exit-hint">Battle in progress — no medals if you leave early.</p>
+          <p class="battle-countdown-label">Time remaining</p>
+          <div id="battleCountdown" class="battle-countdown" aria-live="polite" hidden>0:00</div>
+          <aside id="battleScoreboard" class="battle-scoreboard" aria-label="Battle running totals">
+            <h3 class="battle-scoreboard-title">Running totals</h3>
+            <div id="battleScoreboardList" class="battle-scoreboard-list"></div>
+          </aside>
           <button id="exitBattleBtn" type="button" class="button danger battle-exit-btn">Exit battle</button>
         </div>
 
@@ -32,11 +38,7 @@
       </section>
 
       <section class="tank-wrap" id="tankSection">
-        <aside id="battleScoreboard" class="battle-scoreboard" hidden aria-label="Battle scores">
-          <h3 class="battle-scoreboard-title">Running totals</h3>
-          <div id="battleScoreboardList" class="battle-scoreboard-list"></div>
-        </aside>
-        <div id="tank" class="tank tank-flex-grow" aria-label="Fish tank"></div>
+        <div id="tank" class="tank" aria-label="Fish tank"></div>
       </section>
     </main>
 
@@ -45,19 +47,46 @@
     <div id="addFishModal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="addFishModalTitle">
       <div class="modal-card">
         <h2 id="addFishModalTitle">Add fish</h2>
-        <p class="modal-hint">Choose an image and give your fish a name.</p>
+        <p class="modal-hint">Pick the default fish or upload your own image.</p>
         <div class="modal-fields">
           <label class="modal-field">
             <span>Fish name</span>
             <input id="addFishNameInput" type="text" maxlength="48" autocomplete="off" placeholder="e.g. Bubbles" />
           </label>
           <div class="modal-field">
-            <span>Image</span>
-            <label class="button file-button modal-file-trigger">
-              Choose image
-              <input id="addFishImageInput" type="file" accept="image/*" />
+            <span>Look</span>
+            <div class="add-fish-source-toggle" role="radiogroup" aria-label="Fish image source">
+              <label class="add-fish-source-option">
+                <input type="radio" name="addFishSource" id="addFishSourceDefault" value="default" checked />
+                Default fish
+              </label>
+              <label class="add-fish-source-option">
+                <input type="radio" name="addFishSource" id="addFishSourceUpload" value="upload" />
+                Upload image
+              </label>
+            </div>
+          </div>
+          <div id="addFishDefaultPanel" class="add-fish-default-panel">
+            <label class="modal-field add-fish-color-field">
+              <span>Colour</span>
+              <input id="addFishColorInput" type="color" value="#f28b54" />
             </label>
-            <span id="addFishImageLabel" class="add-fish-file-label" data-empty="true">No file chosen</span>
+          </div>
+          <div id="addFishUploadPanel" class="add-fish-upload-panel" hidden>
+            <div class="modal-field">
+              <span>Image file</span>
+              <label class="button file-button modal-file-trigger">
+                Choose image
+                <input id="addFishImageInput" type="file" accept="image/*" />
+              </label>
+              <span id="addFishImageLabel" class="add-fish-file-label" data-empty="true">No file chosen</span>
+            </div>
+          </div>
+          <div class="add-fish-preview-wrap">
+            <span class="add-fish-preview-label">Preview</span>
+            <div class="add-fish-preview-stage">
+              <img id="addFishPreview" class="add-fish-preview" alt="" hidden />
+            </div>
           </div>
         </div>
         <div class="modal-actions">

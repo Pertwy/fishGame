@@ -382,6 +382,7 @@ function snapshot(includeImages = false) {
     medals: state.medals,
     fight: {
       phase: state.fight.phase,
+      endsAt: state.fight.endsAt,
       eatCounts: state.fight.eatCounts,
       results: state.fight.results
     }

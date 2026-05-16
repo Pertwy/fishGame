@@ -26,16 +26,28 @@ async function compressDataUrl(src) {
   if (!parsed || !parsed.buffer.length) return TINY_PLACEHOLDER;
 
   try {
-    const out = await sharp(parsed.buffer)
-      .rotate()
-      .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
-      .toBuffer();
-    const compressed = `data:image/jpeg;base64,${out.toString("base64")}`;
+    const meta = await sharp(parsed.buffer).metadata();
+    const hasAlpha = Boolean(meta.hasAlpha);
+    let pipeline = sharp(parsed.buffer).rotate().resize(MAX_DIM, MAX_DIM, {
+      fit: "inside",
+      withoutEnlargement: true
+    });
+    let out;
+    if (hasAlpha) {
+      out = await pipeline.png({ compressionLevel: 9, effort: 7 }).toBuffer();
+    } else {
+      out = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+    }
+    const mime = hasAlpha ? "image/png" : "image/jpeg";
+    let compressed = `data:${mime};base64,${out.toString("base64")}`;
     if (compressed.length > TARGET_MAX_CHARS) {
-      console.warn(`Compressed image still large (${compressed.length} chars), using smaller quality`);
-      const smaller = await sharp(out).jpeg({ quality: 65, mozjpeg: true }).toBuffer();
-      return `data:image/jpeg;base64,${smaller.toString("base64")}`;
+      console.warn(`Compressed image still large (${compressed.length} chars), recompressing`);
+      if (hasAlpha) {
+        out = await sharp(out).png({ compressionLevel: 9, effort: 10, palette: true }).toBuffer();
+      } else {
+        out = await sharp(out).jpeg({ quality: 65, mozjpeg: true }).toBuffer();
+      }
+      compressed = `data:${mime};base64,${out.toString("base64")}`;
     }
     return compressed;
   } catch (error) {
