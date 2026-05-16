@@ -1,3 +1,4 @@
 node_modules/
 tank-state.json
 seed-state.json
+.env

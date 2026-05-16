@@ -3,6 +3,7 @@ const path = require("node:path");
 const http = require("node:http");
 const { WebSocketServer } = require("ws");
 const store = require("./store");
+const images = require("./images");
 
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
@@ -305,9 +306,11 @@ function dismissResults() {
   state.fight.phase = "idle";
 }
 
-function addFish(name, src) {
+async function addFish(name, src) {
   if (typeof src !== "string" || !src.startsWith("data:image/")) return;
-  const img = { id: id("img"), src };
+  const compressed = await images.compressDataUrl(src);
+  if (!compressed) return;
+  const img = { id: id("img"), src: compressed };
   state.images.push(img);
   const sr = swimRect();
   const sxLo = Math.min(sr.minX + 6, sr.maxX);
@@ -344,17 +347,24 @@ function removeFish(fishId) {
   if (!state.fishes.length && state.fight.phase === "running") exitFightEarly();
 }
 
-function editFishImage(fishId, src) {
+async function editFishImage(fishId, src) {
   if (typeof src !== "string" || !src.startsWith("data:image/")) return;
+  const compressed = await images.compressDataUrl(src);
+  if (!compressed) return;
   const fish = state.fishes.find((f) => f.id === fishId);
   if (!fish) return;
   const image = getImageById(fish.imageId);
-  if (image) image.src = src;
+  if (image) image.src = compressed;
 }
 
-function snapshot() {
-  return {
-    images: state.images,
+async function compressStoredImages() {
+  const changed = await images.compressImageRecords(state.images);
+  if (changed) await store.save(persistencePayload());
+  return changed;
+}
+
+function snapshot(includeImages = false) {
+  const payload = {
     fishes: state.fishes.map((f) => ({
       id: f.id,
       imageId: f.imageId,
@@ -376,6 +386,32 @@ function snapshot() {
       results: state.fight.results
     }
   };
+  if (includeImages) payload.images = state.images;
+  return payload;
+}
+
+function broadcastState(includeImages = false) {
+  let data = "";
+  try {
+    data = JSON.stringify({ type: "state", payload: snapshot(includeImages) });
+  } catch (error) {
+    console.error("Failed to serialize tank state:", error);
+    return;
+  }
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      try {
+        client.send(data);
+      } catch (error) {
+        console.error("Failed to send state to client:", error);
+      }
+    }
+  }
+}
+
+function notifyTankChanged(includeImages = true) {
+  broadcastState(includeImages);
+  saveSnapshot();
 }
 
 function persistencePayload() {
@@ -466,7 +502,7 @@ async function handleAdminApi(req, res, url) {
         return true;
       }
       await store.save(persistencePayload());
-      broadcastState();
+      broadcastState(true);
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end(`Imported ${state.fishes.length} fish.`);
     } catch (error) {
@@ -505,20 +541,11 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ server });
-
-function broadcastState() {
-  const data = JSON.stringify({ type: "state", payload: snapshot() });
-  for (const client of wss.clients) {
-    if (client.readyState === 1) {
-      client.send(data);
-    }
-  }
-}
+const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 * 1024 });
 
 wss.on("connection", (ws) => {
-  ws.send(JSON.stringify({ type: "state", payload: snapshot() }));
-  ws.on("message", (raw) => {
+  ws.send(JSON.stringify({ type: "state", payload: snapshot(true) }));
+  ws.on("message", async (raw) => {
     let msg = null;
     try {
       msg = JSON.parse(String(raw));
@@ -527,40 +554,55 @@ wss.on("connection", (ws) => {
     }
     if (!msg || typeof msg !== "object") return;
     const payload = msg.payload || {};
-    if (msg.type === "addFish") addFish(payload.name, payload.src);
-    else if (msg.type === "removeFish") removeFish(payload.fishId);
-    else if (msg.type === "editFishImage") editFishImage(payload.fishId, payload.src);
-    else if (msg.type === "startFight") startFight(payload.durationSec, payload.foodIntervalSec);
-    else if (msg.type === "exitFightEarly") exitFightEarly();
-    else if (msg.type === "dismissResults") dismissResults();
+    let imagesChanged = false;
+    try {
+      if (msg.type === "addFish") {
+        await addFish(payload.name, payload.src);
+        imagesChanged = true;
+      } else if (msg.type === "removeFish") {
+        removeFish(payload.fishId);
+        imagesChanged = true;
+      } else if (msg.type === "editFishImage") {
+        await editFishImage(payload.fishId, payload.src);
+        imagesChanged = true;
+      } else if (msg.type === "startFight") startFight(payload.durationSec, payload.foodIntervalSec);
+      else if (msg.type === "exitFightEarly") exitFightEarly();
+      else if (msg.type === "dismissResults") dismissResults();
+    } catch (error) {
+      console.error("WebSocket message handler error:", error);
+      return;
+    }
+    if (imagesChanged) notifyTankChanged(true);
   });
 });
 
-let lastTick = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  const dt = Math.min(0.05, (now - lastTick) / 1000);
-  lastTick = now;
+function startGameLoops() {
+  let lastTick = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const dt = Math.min(0.05, (now - lastTick) / 1000);
+    lastTick = now;
 
-  updateFood(dt);
-  for (const fish of state.fishes) updateFish(fish, dt, now);
+    updateFood(dt);
+    for (const fish of state.fishes) updateFish(fish, dt, now);
 
-  if (state.fight.phase === "running") {
-    if (now >= state.fight.endsAt) {
-      endFightWithResults();
-    } else {
-      let drops = 0;
-      while (now >= state.fight.nextFoodAt && state.fight.nextFoodAt < state.fight.endsAt && drops < 5) {
-        dropRandomFightFood();
-        state.fight.nextFoodAt += state.fight.foodIntervalMs;
-        drops += 1;
+    if (state.fight.phase === "running") {
+      if (now >= state.fight.endsAt) {
+        endFightWithResults();
+      } else {
+        let drops = 0;
+        while (now >= state.fight.nextFoodAt && state.fight.nextFoodAt < state.fight.endsAt && drops < 5) {
+          dropRandomFightFood();
+          state.fight.nextFoodAt += state.fight.foodIntervalMs;
+          drops += 1;
+        }
       }
     }
-  }
-  broadcastState();
-}, 50);
+    broadcastState(false);
+  }, 50);
 
-setInterval(saveSnapshot, 10_000);
+  setInterval(saveSnapshot, 10_000);
+}
 
 async function start() {
   await store.init();
@@ -569,17 +611,24 @@ async function start() {
     const seed = store.loadSeedFile();
     if (seed) {
       applyPersistedPayload(seed);
-      await store.save(persistencePayload());
+      await compressStoredImages();
       console.log("Loaded initial tank from seed-state.json");
     }
   } else {
     applyPersistedPayload(saved);
     console.log(`Restored tank (${state.fishes.length} fish) from ${store.storageLabel()}`);
+    if (process.env.DATABASE_URL) {
+      await store.save(persistencePayload());
+      console.log("Persisted compressed fish images to database");
+    } else {
+      await compressStoredImages();
+    }
   }
 
   server.listen(PORT, () => {
     console.log(`Fish tank server running on http://localhost:${PORT}`);
     console.log(`Persistence: ${store.storageLabel()}`);
+    startGameLoops();
   });
 }
 

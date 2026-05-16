@@ -89,8 +89,12 @@ function getFishMedals(fishId) {
 }
 
 function wsSend(type, payload = {}) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    window.alert("Lost connection to the tank. Wait a few seconds and try again.");
+    return false;
+  }
   socket.send(JSON.stringify({ type, payload }));
+  return true;
 }
 
 function worldToTank(x, y) {
@@ -285,7 +289,7 @@ function syncFishActionBar() {
 }
 
 function applyRemoteState(payload) {
-  state.images = Array.isArray(payload.images) ? payload.images : [];
+  if (Array.isArray(payload.images)) state.images = payload.images;
   state.fishes = Array.isArray(payload.fishes) ? payload.fishes : [];
   state.foods = Array.isArray(payload.foods) ? payload.foods : [];
   state.medals = payload.medals && typeof payload.medals === "object" ? payload.medals : {};
@@ -302,10 +306,30 @@ function applyRemoteState(payload) {
   refreshSelectionUI();
 }
 
-function uploadAsDataUrl(file) {
+function uploadAsDataUrl(file, maxDim = 320) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const longest = Math.max(img.width, img.height, 1);
+        const scale = Math.min(1, maxDim / longest);
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(String(reader.result));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = () => reject(new Error("Image decode failed"));
+      img.src = String(reader.result);
+    };
     reader.onerror = () => reject(new Error("File read failed"));
     reader.readAsDataURL(file);
   });
@@ -383,6 +407,10 @@ function connectSocket() {
     state.connected = false;
     refreshControls();
     setTimeout(connectSocket, 1000);
+  });
+  socket.addEventListener("error", () => {
+    state.connected = false;
+    refreshControls();
   });
   socket.addEventListener("message", (event) => {
     let msg = null;

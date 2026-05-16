@@ -12,12 +12,20 @@ function usesDatabase() {
   return Boolean(DATABASE_URL);
 }
 
+function databasePoolConfig() {
+  const local = /localhost|127\.0\.0\.1/.test(DATABASE_URL);
+  if (local) return { connectionString: DATABASE_URL };
+  const connectionString = DATABASE_URL.replace(/([?&])sslmode=[^&]*&?/g, "$1").replace(/[?&]$/, "");
+  return {
+    connectionString,
+    ssl: { rejectUnauthorized: false }
+  };
+}
+
 async function init() {
   if (!usesDatabase()) return;
   const { Pool } = require("pg");
-  const ssl =
-    /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false };
-  pool = new Pool({ connectionString: DATABASE_URL, ssl });
+  pool = new Pool(databasePoolConfig());
   await pool.query(`
     CREATE TABLE IF NOT EXISTS tank_state (
       id TEXT PRIMARY KEY,
@@ -68,9 +76,34 @@ async function saveToFile(payload) {
 async function loadFromDatabase() {
   if (!pool) return null;
   try {
-    const result = await pool.query("SELECT payload FROM tank_state WHERE id = $1", ["main"]);
-    if (!result.rows.length) return null;
-    return normalizePayload(result.rows[0].payload);
+    const baseResult = await pool.query(
+      "SELECT (payload - 'images') AS payload FROM tank_state WHERE id = $1",
+      ["main"]
+    );
+    if (!baseResult.rows.length) return null;
+
+    const normalized = normalizePayload(baseResult.rows[0].payload);
+    const images = require("./images");
+    const imgResult = await pool.query(
+      `SELECT elem AS image
+       FROM tank_state,
+       LATERAL jsonb_array_elements(COALESCE(payload->'images', '[]'::jsonb)) AS elem
+       WHERE id = $1`,
+      ["main"]
+    );
+
+    normalized.images = [];
+    for (const row of imgResult.rows) {
+      const img = row.image;
+      if (!img || typeof img.id !== "string") continue;
+      const src = typeof img.src === "string" ? img.src : "";
+      const compressed = src ? await images.compressDataUrl(src) : images.TINY_PLACEHOLDER;
+      normalized.images.push({
+        id: img.id,
+        src: compressed || images.TINY_PLACEHOLDER
+      });
+    }
+    return normalized;
   } catch (error) {
     console.error("Failed to load snapshot from database:", error);
     return null;
