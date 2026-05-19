@@ -188,7 +188,15 @@ function renderInlineLeaderboard() {
     return;
   }
   const head = `<div class="leaderboard-row lb-head"><span></span><span>Fish</span><span class="lb-medal">Gold</span><span class="lb-medal">Silver</span><span class="lb-medal">Bronze</span></div>`;
-  const rows = state.fishes
+  const rows = [...state.fishes]
+    .sort((a, b) => {
+      const ma = getFishMedals(a.id);
+      const mb = getFishMedals(b.id);
+      if (mb.gold !== ma.gold) return mb.gold - ma.gold;
+      if (mb.silver !== ma.silver) return mb.silver - ma.silver;
+      if (mb.bronze !== ma.bronze) return mb.bronze - ma.bronze;
+      return fishDisplayName(a).localeCompare(fishDisplayName(b), undefined, { sensitivity: "base" });
+    })
     .map((fish) => {
       const m = getFishMedals(fish.id);
       const meta = getImageById(fish.imageId);
@@ -406,10 +414,10 @@ function uploadAsDataUrl(file, maxDim = 320) {
 function defaultFishSvg(color) {
   const fill = color || DEFAULT_FISH_COLOR;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 72">
-    <ellipse cx="46" cy="36" rx="38" ry="24" fill="${fill}"/>
-    <path d="M84 36 L116 20 L116 52 Z" fill="${fill}"/>
-    <circle cx="30" cy="28" r="6" fill="#ffffff"/>
-    <circle cx="29" cy="28" r="3" fill="#173040"/>
+    <ellipse cx="74" cy="36" rx="38" ry="24" fill="${fill}"/>
+    <path d="M36 36 L4 20 L4 52 Z" fill="${fill}"/>
+    <circle cx="90" cy="28" r="6" fill="#ffffff"/>
+    <circle cx="91" cy="28" r="3" fill="#173040"/>
   </svg>`;
 }
 

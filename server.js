@@ -61,13 +61,13 @@ function fishDisplayName(fish) {
 function swimRect() {
   const sandReserve = WORLD_HEIGHT * SAND_HEIGHT_RATIO + 14;
   const maxY = Math.max(12, WORLD_HEIGHT - FISH_SIZE.h - sandReserve);
-  const maxX = Math.max(12, WORLD_WIDTH - FISH_SIZE.w - 12);
-  return { minX: 6, maxX, minY: 10, maxY };
+  const maxX = Math.max(0, WORLD_WIDTH - FISH_SIZE.w);
+  return { minX: 0, maxX, minY: 10, maxY };
 }
 
 function randomSwimTarget() {
   const r = swimRect();
-  const loX = Math.min(r.minX + 14, r.maxX);
+  const loX = r.minX;
   const hiX = r.maxX;
   const loY = Math.min(r.minY + 8, r.maxY);
   const hiY = r.maxY;
@@ -204,7 +204,9 @@ function dropFood(x, y) {
 
 function dropRandomFightFood() {
   if (WORLD_WIDTH < 48 || WORLD_HEIGHT < 48) return;
-  dropFood(rand(24, WORLD_WIDTH - 24), rand(32, Math.max(32, WORLD_HEIGHT * 0.48)));
+  const sr = swimRect();
+  const foodX = sr.maxX > sr.minX ? rand(sr.minX, sr.maxX) : (sr.minX + sr.maxX) * 0.5;
+  dropFood(foodX, rand(32, Math.max(32, WORLD_HEIGHT * 0.48)));
 }
 
 function spreadFishEvenlyForBattle(now) {
@@ -313,7 +315,7 @@ async function addFish(name, src) {
   const img = { id: id("img"), src: compressed };
   state.images.push(img);
   const sr = swimRect();
-  const sxLo = Math.min(sr.minX + 6, sr.maxX);
+  const sxLo = sr.minX;
   const sxHi = sr.maxX;
   const syLo = Math.min(sr.minY + 6, sr.maxY);
   const syHi = sr.maxY;
